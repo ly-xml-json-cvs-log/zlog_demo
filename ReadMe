@@ -1,0 +1,78 @@
+(一)zlog概述：
+1. zlog api 线程安全的c日志函数库；
+2. 采用分类，规则和格式控制日志输出：匹配日志分类，根据定义好的格式执行该分类的规则；
+3. 分类名以“_”下划线结尾:匹配本级分类和下级分类；
+4. 分类名默认日志等级DEBUG，当程序日志等级 大于 分类名中指定的日志等级，则输出该日志；支持用户自定义日志等级,范围[1,253];
+5. 支持日志输出到日志文件(可指定文件名)，stdout或stderr，输出到管道；
+6. 支持日志转档(可以按时间指定日志文件名，或者当日志文件大小超过Max时进行转档)；
+7. 支持定义日志的键-值表，控制日志输出格式；
+8. 修改日志配置文件之后，可以使用“./zlog-chk-conf demo.conf"检测配置文件是否正确；
+9. 为了在arm平台上使用，.so文件用arm-linux-gcc(/usr/local/arm/4.3.2/bin/arm-linux-gcc)编译。
+
+(二)zlog使用：
+----------------------------------------
+1. 首先，程序需要使用到zlog编译出来的两个动态库文件：libzlog.so, libzlog.so.1.1；在程序中引入头文件"zlog.h";将两个.so文件拷贝到/usr/lib目录下；
+----------------------------------------
+2. 创建日志配置文件demo.conf：
+############################################
+[formats]
+simple	= "%d %V %m%n"
+
+############################################
+[rules]
+# 日志分类规则 		日志输出文件路径;日志输出格式(没有定义则使用默认格式)
+sys_sub1.INFO 		"./infoSub1.log";
+sys_sub1.DEBUG 		"./debugSub1.log";simple
+sys_sub1.=DEBUG 	"./equalDebugSub1.log";simple
+sys_sub1.!INFO	 	"./notEqualInfoSub1.log";simple
+sys_sub2.DEBUG		"./debugSub2.log";
+
+# 以"_"结尾的分类名:同时匹配本级分类和下级分类
+sys_.DEBUG		"./%d(%Y%m%d)_Sys.log";
+# 匹配所有规则，程序中定义的分类规则名，无论能否匹配到上面规则，只要日志等级大于DEBUG，都会匹配"*.DEBUG"。
+*.DEBUG 		"./debugAll.log";
+----------------------------------------
+3. 在程序中使用zlog_init完成zlog的初始化工作(加载日志配置文件)：zlog_init("demo.conf");
+----------------------------------------
+4. 获取日志配置中的日志分类规则，可以同时获取多个；如果找不到，则会创建一个：
+z_sub1 = zlog_get_category("sys_sub1");
+z_all = zlog_get_category("othersOrAll");
+其中z_sub1,z_all类型为 zlog_category_t *;而zlog_category_t为库的日志分类结构；
+----------------------------------------
+5. 日志输出：
+例如输出日志信息，如使用zlog_debug(z_sub1, "hello, zlog-sub1")，则程序定义此条日志信息的日志等级为debug，查找名为“z_sub1”的分类规则，如果找到，则按照规则所定义的格式输出到日志文件；这里我们在日志配置文件中找到了4条匹配的分类规则：
+(1)sys_sub1.INFO 		"./infoSub1.log";
+(2)sys_sub1.DEBUG 		"./debugSub1.log";simple
+(3)sys_sub1.=DEBUG 	"./equalDebugSub1.log";simple
+(4)sys_sub1.!INFO	 	"./notEqualInfoSub1.log";simple
+第(1)条，由于我们程序定义的日志等级为DEBUG，小于日志配置文件中相应分类规则sys_sub1.INFO等级(DEBUG<INFO)，所以zlog_debug(z_sub1, "hello, zlog-sub1")不会输出日志到sys_sub1.INFO所指定的日志文件；
+第(2)条，分类规则匹配，程序日志等级大于日志配置文件日志等级(DEBUG>=DEBUG),所以zlog_debug(z_sub1, "hello, zlog-sub1")输出日志到sys_sub1.DEBUG 所指定的日志文件；
+第(3)条，分类规则匹配，日志等级相等(DEBUG=DEBUG),所以zlog_debug(z_sub1, "hello, zlog-sub1")输出日志到sys_sub1.=DEBUG 所指定的日志文件；
+第(4)条，分类规则匹配，日志等级满足日志配置文件中日志等级要求(DEBUG!=INFO),所以zlog_debug(z_sub1, "hello, zlog-sub1")输出日志到sys_sub1.!INFO 所指定的日志文件；
+----------------------------------------
+6. 我们在日志配置文件中也定义了：
+sys_.DEBUG		"./%d(%Y%m%d)_Sys.log";
+只要日志等级满足输出条件，那么此条规则会匹配程序中所有指定的本级分类(sys_)和下级分类(sys_sub1, sys_sub2, ...);
+所以zlog_debug(z_sub1, "hello, zlog-sub1") 也会输出日志到此规则指定的日志文件；
+----------------------------------------
+7. 我们在日志配置文件最后定义了一个匹配所有的分类规则：
+*.DEBUG 		"./debugAll.log";
+只要日志等级满足输出条件，那么程序指定的所有规则都会匹配此条分类规则；所以zlog_debug(z_sub1, "hello, zlog-sub1")也会输出日志到此条分类规则所指定的日志文件；
+
+同时，我们在程序中也指定了一个分类规则名：
+zlog_get_category("othersOrAll");
+此条规则没有显示匹配到日志配置文件中的任何一条分类规则，那么最后也会匹配到此条规则(*.DEBUG).
+所以只要日志等级满足输出条件，那么zlog_get_category("othersOrAll")也会将日志输出到此条规则所指定的日志文件。 
+----------------------------------------
+8. 所有日志输出都被封装成宏，如下：
+	// zlog macros
+	// zlog_fatal(cat, format, ...)
+	// zlog_error(cat, format, ...)
+	// zlog_warn(cat, format, ...)
+	// zlog_notice(cat, format, ...)
+	// zlog_info(cat, format, ...)
+	// zlog_debug(cat, format, ...)
+----------------------------------------
+9. 使用完日志库可以使用zlog_fini()来清理所有zlog API申请的内存，关闭它们打开的文件.
+----------------------------------------
+----------------------------------------
